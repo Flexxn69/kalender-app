@@ -135,6 +135,13 @@ function CalendarMonth({
   )
 }
 
+
+type ApiContact = {
+  id: string;
+  name: string;
+  email: string;
+};
+
 export default function ContactsPage() {
 
   // State-Management
@@ -166,14 +173,13 @@ export default function ContactsPage() {
   const [conflictingEvents, setConflictingEvents] = useState<Event[]>([])
   const [suggestedTime, setSuggestedTime] = useState<{ startTime: string; endTime: string } | null>(null)
 
+
   // AppStore
   const currentUserId = useAppStore((s) => s.currentUserId)
   const conversations = useAppStore((s) => s.conversations)
   const router = useRouter()
   const { toast } = useToast()
   const {
-    contacts,
-    addContact,
     updateContact,
     toggleFavorite,
     deleteContact,
@@ -185,6 +191,40 @@ export default function ContactsPage() {
     updateGroup,
     deleteGroup,
   } = useAppStore()
+
+  // Kontakte aus API laden
+  const [contacts, setContacts] = useState<Contact[]>([])
+  useEffect(() => {
+    fetch("/api/contacts", { credentials: "include" })
+      .then((res) => res.ok ? res.json() : [])
+      .then((data: ApiContact[]) => {
+        setContacts(data.map((c) => ({
+          ...c,
+          status: "offline",
+          isRegistered: true,
+        })))
+      })
+      .catch(() => setContacts([]))
+  }, [])
+
+  // Kontakt hinzufügen (API)
+  async function addContactApi(newContact: { name: string; email: string; phone?: string }) {
+    try {
+      const res = await fetch("/api/contacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ name: newContact.name, email: newContact.email })
+      })
+      if (!res.ok) throw new Error("Fehler beim Hinzufügen")
+      const data = await res.json()
+      setContacts((prev) => [...prev, { ...data, status: "offline", isRegistered: true }])
+      return data
+    } catch (e) {
+      toast({ title: "Fehler", description: "Kontakt konnte nicht gespeichert werden", variant: "destructive" })
+      return null
+    }
+  }
 
   // Einladung
   const [inviteData, setInviteData] = useState({
@@ -829,19 +869,15 @@ export default function ContactsPage() {
               }
               // Prüfen, ob Kontakt registriert ist
               const regUser = await checkIfRegistered(newContact.email, newContact.phone)
-              const newContactWithId: Contact = {
-                ...newContact,
-                id: Math.random().toString(36).substring(2, 9),
-                status: "offline",
-                isRegistered: !!regUser,
+              const result = await addContactApi(newContact)
+              if (result) {
+                setNewContactDialogOpen(false)
+                setNewContact({ name: "", email: "", phone: "" })
+                toast({
+                  title: "Kontakt hinzugefügt",
+                  description: `${newContact.name} wurde zu Ihren Kontakten hinzugefügt.`,
+                })
               }
-              addContact(newContactWithId)
-              setNewContactDialogOpen(false)
-              setNewContact({ name: "", email: "", phone: "" })
-              toast({
-                title: "Kontakt hinzugefügt",
-                description: `${newContactWithId.name} wurde zu Ihren Kontakten hinzugefügt.`,
-              })
             }}>
               Kontakt hinzufügen
             </Button>
@@ -1052,19 +1088,15 @@ export default function ContactsPage() {
                       <div className="font-medium">{u.name}</div>
                       <div className="text-xs text-muted-foreground">{u.email}</div>
                     </div>
-                    <Button size="sm" onClick={() => {
-                      addContact({
-                        id: u.id,
-                        name: u.name,
-                        email: u.email,
-                        status: "offline",
-                        isRegistered: true,
-                      })
-                      setAddRegisteredDialogOpen(false)
-                      toast({
-                        title: "Kontakt hinzugefügt",
-                        description: `${u.name} wurde zu deinen Kontakten hinzugefügt.`,
-                      })
+                    <Button size="sm" onClick={async () => {
+                      const result = await addContactApi({ name: u.name, email: u.email })
+                      if (result) {
+                        setAddRegisteredDialogOpen(false)
+                        toast({
+                          title: "Kontakt hinzugefügt",
+                          description: `${u.name} wurde zu deinen Kontakten hinzugefügt.`,
+                        })
+                      }
                     }}>Hinzufügen</Button>
                   </div>
                 ))}
