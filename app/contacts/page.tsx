@@ -108,7 +108,7 @@ function CalendarMonth({
       days.push(
         <div
           key={dayIso}
-          className={`w-8 h-14 flex flex-col items-center justify-center rounded-md cursor-pointer select-none border transition-all
+          className={`w-8 h-14 sm:h-14 h-10 flex flex-col items-center justify-center rounded-md cursor-pointer select-none border transition-all mobile-calendar-day
             ${isCurrentMonth ? "text-black" : "text-gray-400"}
             ${isSelected ? "border-blue-500 bg-blue-50 font-semibold" : "border-transparent"}
           `}
@@ -129,18 +129,20 @@ function CalendarMonth({
 
   return (
     <div>
+      <style jsx global>{`
+        @media (max-width: 640px) {
+          .mobile-calendar-day {
+            height: 2.2rem !important;
+            min-height: 2.2rem !important;
+            max-height: 2.2rem !important;
+          }
+        }
+      `}</style>
       <div className="flex">{weekdays}</div>
       <div>{rows}</div>
     </div>
   )
 }
-
-
-type ApiContact = {
-  id: string;
-  name: string;
-  email: string;
-};
 
 export default function ContactsPage() {
 
@@ -173,13 +175,14 @@ export default function ContactsPage() {
   const [conflictingEvents, setConflictingEvents] = useState<Event[]>([])
   const [suggestedTime, setSuggestedTime] = useState<{ startTime: string; endTime: string } | null>(null)
 
-
   // AppStore
   const currentUserId = useAppStore((s) => s.currentUserId)
   const conversations = useAppStore((s) => s.conversations)
   const router = useRouter()
   const { toast } = useToast()
   const {
+    contacts,
+    addContact,
     updateContact,
     toggleFavorite,
     deleteContact,
@@ -191,40 +194,6 @@ export default function ContactsPage() {
     updateGroup,
     deleteGroup,
   } = useAppStore()
-
-  // Kontakte aus API laden
-  const [contacts, setContacts] = useState<Contact[]>([])
-  useEffect(() => {
-    fetch("/api/contacts", { credentials: "include" })
-      .then((res) => res.ok ? res.json() : [])
-      .then((data: ApiContact[]) => {
-        setContacts(data.map((c) => ({
-          ...c,
-          status: "offline",
-          isRegistered: true,
-        })))
-      })
-      .catch(() => setContacts([]))
-  }, [])
-
-  // Kontakt hinzufügen (API)
-  async function addContactApi(newContact: { name: string; email: string; phone?: string }) {
-    try {
-      const res = await fetch("/api/contacts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ name: newContact.name, email: newContact.email })
-      })
-      if (!res.ok) throw new Error("Fehler beim Hinzufügen")
-      const data = await res.json()
-      setContacts((prev) => [...prev, { ...data, status: "offline", isRegistered: true }])
-      return data
-    } catch (e) {
-      toast({ title: "Fehler", description: "Kontakt konnte nicht gespeichert werden", variant: "destructive" })
-      return null
-    }
-  }
 
   // Einladung
   const [inviteData, setInviteData] = useState({
@@ -505,32 +474,32 @@ export default function ContactsPage() {
 
   // Kontakt-Card
   const ContactCard = ({ contact }: { contact: Contact }) => (
-    <Card key={contact.id} className="hover:shadow-md transition-shadow mb-4 w-full max-w-full">
-      <CardContent className="p-4 w-full max-w-full">
-        <div className="flex items-center justify-between flex-wrap gap-1">
-          <div className="flex items-center gap-3 min-w-0">
+    <Card key={contact.id} className="hover:shadow-md transition-shadow mb-3 w-full max-w-full py-2">
+      <CardContent className="p-3 w-full max-w-full">
+        <div className="flex items-center justify-between flex-wrap gap-0.5">
+          <div className="flex items-center gap-1 min-w-0">
             <div className="relative flex-shrink-0">
-              <Avatar className="h-10 w-10">
+              <Avatar className="h-8 w-8">
                 <AvatarFallback>{contact.name.charAt(0).toUpperCase()}</AvatarFallback>
               </Avatar>
               {contact.isRegistered !== false && (
                 <div
-                  className={`absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-background ${getStatusColor(contact.status)}`}
+                  className={`absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-full border-2 border-background ${getStatusColor(contact.status)}`}
                 />
               )}
             </div>
             <div className="min-w-0">
-              <h3 className="font-medium text-sm truncate max-w-[140px] sm:max-w-xs">{contact.name}</h3>
+              <h3 className="font-medium text-xs truncate max-w-[90px] sm:max-w-[120px]">{contact.name}</h3>
             </div>
           </div>
-          <div className="flex items-center gap-1 flex-shrink-0">
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleStartChat(contact.id, false)}>
+          <div className="flex items-center gap-0.5 flex-shrink-0">
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleStartChat(contact.id, false)}>
               <MessageCircle className="h-4 w-4" />
             </Button>
             <Button
               variant={calendarState.open && calendarState.contactId === contact.id ? "secondary" : "ghost"}
               size="icon"
-              className="h-8 w-8"
+              className="h-7 w-7"
               aria-label="Kalender öffnen"
               onClick={() => handleToggleCalendar(contact)}
             >
@@ -539,7 +508,7 @@ export default function ContactsPage() {
             <Button
               variant={infoState.open && infoState.contactId === contact.id ? "secondary" : "ghost"}
               size="icon"
-              className="h-8 w-8"
+              className="h-7 w-7"
               aria-label="Info anzeigen"
               onClick={() => handleToggleInfo(contact)}
             >
@@ -547,7 +516,7 @@ export default function ContactsPage() {
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
+                <Button variant="ghost" size="icon" className="h-7 w-7">
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -656,8 +625,8 @@ export default function ContactsPage() {
 
   // GroupCard analog zu oben
   const GroupCard = ({ group }: { group: Group }) => (
-    <Card key={group.id} className="hover:shadow-md transition-shadow mb-4 w-full max-w-full">
-      <CardContent className="p-4 flex items-center justify-between flex-wrap gap-2 w-full">
+    <Card key={group.id} className="hover:shadow-md transition-shadow mb-4 w-full max-w-full py-4">
+      <CardContent className="p-6 flex items-center justify-between flex-wrap gap-2 w-full">
         <div>
           <h4 className="font-medium text-sm truncate max-w-[200px]">{group.name}</h4>
           <p className="text-xs text-muted-foreground">{group.members?.length || 0} Mitglieder</p>
@@ -721,65 +690,77 @@ export default function ContactsPage() {
 
   return (
     <div className="container py-4 md:py-6 px-4 min-h-screen">
+      <style jsx global>{`
+        @media (max-width: 640px) {
+          .mobile-card-longer {
+            padding-top: 2.5rem !important;
+            padding-bottom: 2.5rem !important;
+            min-height: 340px !important;
+          }
+        }
+      `}</style>
       {/* Überschrift und Buttons */}
       <div className="w-full max-w-[900px] flex items-center justify-between mb-4">
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
           Kontakte
         </h1>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              const message = "Hallo! Ich lade dich ein, unsere Kalender-App zu nutzen. Hier ist dein Einladungslink:";
-              const inviteLink = `${window.location.origin}/auth/register`;
-              if (typeof navigator !== "undefined" && navigator.share) {
-                navigator.share({
-                  text: `${message}\n${inviteLink}`,
-                  url: inviteLink,
-                });
-              } else {
-                window.location.href = `mailto:?subject=Einladung zur Kalender-App&body=${encodeURIComponent(message + "\n\n" + inviteLink)}`;
-              }
-            }}
-          >
-            <UserPlus className="h-4 w-4 mr-2" />
-            Einladen
-          </Button>
-          <Button onClick={() => setNewContactDialogOpen(true)} size="sm">
-            <Plus className="h-4 w-4 mr-2" />
-            Kontakt manuell
-          </Button>
-          <Button onClick={() => setAddRegisteredDialogOpen(true)} variant="outline" size="sm">
-            <Plus className="h-4 w-4 mr-2" />
-            Registrierten Kontakt
-          </Button>
-          <Button onClick={() => setGroupDialogOpen(true)} variant="outline" size="sm">
-            <Plus className="h-4 w-4 mr-2" />
-            Gruppe erstellen
-          </Button>
-        </div>
+        {/* Mobile: 3-Punkte-Menü, Desktop: Buttons */}
+        {/* Entfernt: Doppelte/obere 3-Punkte-Menüleiste und manuelles Hinzufügen. Nur noch die Menüleiste neben Tabs bleibt. */}
       </div>
 
-      {/* Tabs */}
-      <Tabs value={tab} onValueChange={val => setTab(val as "contacts" | "groups")} className="mb-4 w-full">
-        <TabsList className="w-fit mx-auto">
-          <TabsTrigger value="contacts">
-            <MessageCircle className="h-4 w-4 mr-2" />
-            Kontakte
-          </TabsTrigger>
-          <TabsTrigger value="groups">
-            <Users className="h-4 w-4 mr-2" />
-            Gruppen
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
+      {/* Tabs und 3-Punkte-Button auf einer Linie */}
+      <div className="flex items-center justify-between mb-4 w-full max-w-[900px]">
+        <Tabs value={tab} onValueChange={val => setTab(val as "contacts" | "groups")} className="">
+          <TabsList className="w-fit">
+            <TabsTrigger value="contacts">
+              <MessageCircle className="h-4 w-4 mr-2" />
+              Kontakte
+            </TabsTrigger>
+            <TabsTrigger value="groups">
+              <Users className="h-4 w-4 mr-2" />
+              Gruppen
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        {/* 3-Punkte-Button nur auf Mobile sichtbar, aber für Layout-Gleichheit immer rendern (unsichtbar auf Desktop) */}
+        <div className="sm:hidden">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon">
+                <MoreHorizontal className="h-5 w-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => {
+                const message = "Hallo! Ich lade dich ein, unsere Kalender-App zu nutzen. Hier ist dein Einladungslink:";
+                const inviteLink = `${window.location.origin}/auth/register`;
+                if (typeof navigator !== "undefined" && navigator.share) {
+                  navigator.share({
+                    text: `${message}\n${inviteLink}`,
+                    url: inviteLink,
+                  });
+                } else {
+                  window.location.href = `mailto:?subject=Einladung zur Kalender-App&body=${encodeURIComponent(message + "\n\n" + inviteLink)}`;
+                }
+              }}>
+                <UserPlus className="h-4 w-4 mr-2" /> Einladen
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setAddRegisteredDialogOpen(true)}>
+                <Plus className="h-4 w-4 mr-2" /> Kontakt hinzufügen
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setGroupDialogOpen(true)}>
+                <Plus className="h-4 w-4 mr-2" /> Gruppe erstellen
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
 
       {/* Card-Bereich */}
       <div className="grid gap-4 lg:grid-cols-4 max-w-full">
         <div className="lg:col-span-3">
-          <Card className="w-full max-w-[900px]">
-            <CardHeader>
+          <Card className="w-full max-w-[900px] py-10 px-0 min-h-[420px] mobile-card-longer">
+            <CardHeader className="pb-4">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div>
                   <CardTitle>{tab === "contacts" ? "Meine Kontakte" : "Gruppen"}</CardTitle>
@@ -821,69 +802,7 @@ export default function ContactsPage() {
         </div>
       </div>
       {/* Dialoge */}
-      <Dialog open={newContactDialogOpen} onOpenChange={setNewContactDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Neuen Kontakt hinzufügen</DialogTitle>
-            <DialogDescription>Fügen Sie einen neuen Kontakt zu Ihrer Liste hinzu.</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div>
-              <Label htmlFor="name">Name *</Label>
-              <Input
-                id="name"
-                value={newContact.name}
-                onChange={(e) => setNewContact({ ...newContact, name: e.target.value })}
-                placeholder="Vollständiger Name"
-              />
-            </div>
-            <div>
-              <Label htmlFor="email">E-Mail *</Label>
-              <Input
-                id="email"
-                type="email"
-                value={newContact.email}
-                onChange={(e) => setNewContact({ ...newContact, email: e.target.value })}
-                placeholder="email@beispiel.de"
-              />
-            </div>
-            <div>
-              <Label htmlFor="phone">Telefon</Label>
-              <Input
-                id="phone"
-                value={newContact.phone}
-                onChange={(e) => setNewContact({ ...newContact, phone: e.target.value })}
-                placeholder="+49 123 456789"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button type="submit" onClick={async () => {
-              if (!newContact.name || !newContact.email) {
-                toast({
-                  title: "Fehler",
-                  description: "Name und E-Mail sind erforderlich.",
-                  variant: "destructive",
-                })
-                return
-              }
-              // Prüfen, ob Kontakt registriert ist
-              const regUser = await checkIfRegistered(newContact.email, newContact.phone)
-              const result = await addContactApi(newContact)
-              if (result) {
-                setNewContactDialogOpen(false)
-                setNewContact({ name: "", email: "", phone: "" })
-                toast({
-                  title: "Kontakt hinzugefügt",
-                  description: `${newContact.name} wurde zu Ihren Kontakten hinzugefügt.`,
-                })
-              }
-            }}>
-              Kontakt hinzufügen
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Entfernt: Dialog für manuelles Hinzufügen eines Kontakts */}
       <EditContactDialog
         contact={selectedContact}
         open={!!selectedContact}
@@ -1088,15 +1007,19 @@ export default function ContactsPage() {
                       <div className="font-medium">{u.name}</div>
                       <div className="text-xs text-muted-foreground">{u.email}</div>
                     </div>
-                    <Button size="sm" onClick={async () => {
-                      const result = await addContactApi({ name: u.name, email: u.email })
-                      if (result) {
-                        setAddRegisteredDialogOpen(false)
-                        toast({
-                          title: "Kontakt hinzugefügt",
-                          description: `${u.name} wurde zu deinen Kontakten hinzugefügt.`,
-                        })
-                      }
+                    <Button size="sm" onClick={() => {
+                      addContact({
+                        id: u.id,
+                        name: u.name,
+                        email: u.email,
+                        status: "offline",
+                        isRegistered: true,
+                      })
+                      setAddRegisteredDialogOpen(false)
+                      toast({
+                        title: "Kontakt hinzugefügt",
+                        description: `${u.name} wurde zu deinen Kontakten hinzugefügt.`,
+                      })
                     }}>Hinzufügen</Button>
                   </div>
                 ))}

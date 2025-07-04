@@ -480,6 +480,15 @@ export default function CalendarPage() {
 
   return (
     <div className="container py-4 md:py-6 min-h-screen px-4" style={{ minHeight: "100vh", overflowY: "auto" }}>
+      <style jsx global>{`
+        @media (max-width: 640px) {
+          .mobile-card-longer {
+            padding-top: 2.5rem !important;
+            padding-bottom: 2.5rem !important;
+            min-height: 340px !important;
+          }
+        }
+      `}</style>
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-4">
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Kalender</h1>
         <div className="flex gap-2">
@@ -503,7 +512,7 @@ export default function CalendarPage() {
 
         <TabsContent value="all" className="space-y-4">
           <div className="grid gap-4 lg:grid-cols-3">
-            <Card className="lg:col-span-2">
+            <Card className="lg:col-span-2 mt-0 mb-8 sm:mb-8 mobile-card-longer" style={{ marginBottom: "2rem", marginTop: 0 }}>
               <CardHeader>
                 <CardTitle>Alle Termine</CardTitle>
                 <CardDescription>Persönliche und Gruppentermine in einer Übersicht</CardDescription>
@@ -534,7 +543,7 @@ export default function CalendarPage() {
 
         <TabsContent value="personal" className="space-y-4">
           <div className="grid gap-4 lg:grid-cols-3">
-            <Card className="lg:col-span-2">
+            <Card className="lg:col-span-2 mt-0 mb-8 sm:mb-8" style={{ marginBottom: "2rem", marginTop: 0 }}>
               <CardHeader>
                 <CardTitle>Persönliche Termine</CardTitle>
                 <CardDescription>Verwalten Sie Ihre persönlichen Termine</CardDescription>
@@ -565,7 +574,7 @@ export default function CalendarPage() {
 
         <TabsContent value="groups" className="space-y-4">
           <div className="grid gap-4 lg:grid-cols-3">
-            <Card className="lg:col-span-2">
+            <Card className="lg:col-span-2 mt-0 mb-8 sm:mb-8" style={{ marginBottom: "2rem", marginTop: 0 }}>
               <CardHeader>
                 <CardTitle>Gruppentermine</CardTitle>
                 <CardDescription>Gemeinsame Kalender mit Teams, Familie oder Freunden</CardDescription>

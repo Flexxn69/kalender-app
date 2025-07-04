@@ -1,3 +1,12 @@
+model ContactRequest {
+  id        String   @id @default(cuid())
+  fromId    String
+  toId      String
+  status    String   @default("pending") // pending, accepted, rejected
+  createdAt DateTime @default(now())
+  from      User     @relation("ContactRequestFrom", fields: [fromId], references: [id])
+  to        User     @relation("ContactRequestTo", fields: [toId], references: [id])
+}
 generator client {
   provider = "prisma-client-js"
 }
@@ -16,6 +25,8 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   contacts Contact[]
+  sentContactRequests     ContactRequest[] @relation("ContactRequestFrom")
+  receivedContactRequests ContactRequest[] @relation("ContactRequestTo")
 }
 
 model Contact {

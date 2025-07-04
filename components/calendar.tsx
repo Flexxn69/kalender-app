@@ -213,13 +213,22 @@ export function Calendar({
   const renderMonthView = () => {
     return (
       <div className="grid grid-cols-7 gap-1">
+        <style jsx global>{`
+          @media (max-width: 640px) {
+            .mobile-calendar-day {
+              height: 2.2rem !important;
+              min-height: 2.2rem !important;
+              max-height: 2.2rem !important;
+            }
+          }
+        `}</style>
         {days.map((day) => (
           <div key={day} className="h-8 flex items-center justify-center text-sm font-medium text-muted-foreground">
             {day}
           </div>
         ))}
         {Array.from({ length: adjustedFirstDay }).map((_, index) => (
-          <div key={`empty-${index}`} className="h-24 p-1 border rounded-md bg-muted/20" />
+          <div key={`empty-${index}`} className="h-24 p-1 border rounded-md bg-muted/20 mobile-calendar-day" />
         ))}
         {Array.from({ length: daysInMonth }).map((_, index) => {
           const day = index + 1
@@ -228,7 +237,7 @@ export function Calendar({
             <div
               key={`day-${day}`}
               className={cn(
-                "h-24 p-1 border rounded-md hover:bg-accent/50 transition-colors",
+                "h-24 p-1 border rounded-md hover:bg-accent/50 transition-colors mobile-calendar-day",
                 new Date().getDate() === day &&
                   new Date().getMonth() === currentDate.getMonth() &&
                   new Date().getFullYear() === currentDate.getFullYear()
