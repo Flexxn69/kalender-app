@@ -75,7 +75,6 @@ export default function CalendarPage() {
   const activeTab = useAppStore((s) => s.activeTab)
   const setActiveTab = useAppStore((s) => s.setActiveTab)
   const contacts = useAppStore((s) => s.contacts)
-  const currentUserId = useAppStore((s) => s.currentUserId)
   const groups = useAppStore((s) => s.groups)
 
   // Kalender-Ansicht State

@@ -143,12 +143,12 @@ const handleDeleteGroup = (id: string) => {
 
 
   // Filter groups based on search query and active tab
-  const filteredGroups = groups.filter(
   if (loadingGroups) return <div className="p-8 text-center">Gruppen werden geladen...</div>
   if (errorGroups) return <div className="p-8 text-center text-red-500">{errorGroups}</div>
+  const filteredGroups = groups.filter(
     (group) =>
       group.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      group.description.toLowerCase().includes(searchQuery.toLowerCase()),
+      group.description.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
   return (
