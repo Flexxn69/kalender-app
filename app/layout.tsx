@@ -15,15 +15,7 @@ export const metadata = {
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  // Fehlerseite erkennen und ohne Layout rendern
-  const isNotFound = typeof window === "undefined" && process.env.NEXT_ROUTER_PATH === "/_not-found"
-  if (isNotFound) {
-    return (
-      <html lang="de">
-        <body>{children}</body>
-      </html>
-    )
-  }
+  // Fehlerseiten-Logik entfernt, da eigene not-found Seite gelöscht wurde
   return (
     <html lang="de" suppressHydrationWarning>
       <body className={inter.className}>
