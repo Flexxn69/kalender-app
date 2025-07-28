@@ -24,30 +24,50 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
 
   useEffect(() => {
-    // On mount: check if UserSession exists
-    const session = localStorage.getItem('userSession')
-    if (session) {
-      setUserProfile(JSON.parse(session))
+    // On mount: check if UserSession exists (API statt LocalStorage)
+    const fetchSession = async () => {
+      try {
+        const res = await fetch("/api/users/me")
+        if (res.ok) {
+          const user = await res.json()
+          setUserProfile(user)
+        }
+      } catch {}
     }
+    fetchSession()
   }, [])
 
   const login = (profile: UserProfile) => {
     setUserProfile(profile)
-    localStorage.setItem('userSession', JSON.stringify(profile))
+    // Optional: Session in DB oder Cookie setzen
   }
 
   const logout = () => {
     setUserProfile(null)
-    localStorage.removeItem('userSession')
+    // Session in DB oder Cookie löschen
+    // AppStore-UserId zurücksetzen
+    if (typeof window !== "undefined") {
+      try {
+        // API-Logout, falls vorhanden
+        fetch("/api/users/logout", { method: "POST" })
+      } catch {}
+    }
+    // UI-Store leeren
+    if (typeof window !== "undefined") {
+      const appStore = require("@/lib/store")
+      if (appStore?.useAppStore) {
+        try {
+          appStore.useAppStore().setCurrentUserId("")
+        } catch {}
+      }
+    }
   }
 
   const updateProfile = (profile: Partial<UserProfile>) => {
     setUserProfile(prev =>
       prev ? { ...prev, ...profile } : null
     )
-    // Update session in localStorage
-    const current = userProfile ? { ...userProfile, ...profile } : null
-    if (current) localStorage.setItem('userSession', JSON.stringify(current))
+    // Optional: Update auch per API
   }
 
   return (

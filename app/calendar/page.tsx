@@ -9,6 +9,7 @@ import type { Event } from "@/lib/store"
 import { EventDialog } from "@/components/event-dialog"
 import { useAppStore } from "@/lib/store"
 import { addNotificationIfEnabled } from "@/lib/notify"
+import { fetchEvents, addEventApi } from "./eventsApi"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -61,10 +62,16 @@ export default function CalendarPage() {
   const [conflictEventDialogOpen, setConflictEventDialogOpen] = useState(false)
   const [conflictingEvents, setConflictingEvents] = useState<Event[]>([])
   const [suggestedTime, setSuggestedTime] = useState<{ startTime: string; endTime: string } | null>(null)
-  const events = useAppStore((s) => s.events)
-  const addEventRaw = useAppStore((s) => s.addEvent)
-  const updateEventRaw = useAppStore((s) => s.updateEvent)
-  const deleteEvent = useAppStore((s) => s.deleteEvent)
+  // Events aus DB
+  const [events, setEvents] = useState<Event[]>([])
+  const currentUserId = useAppStore((s) => s.currentUserId)
+  // Events aus Datenbank laden
+  useEffect(() => {
+    if (!currentUserId) return
+    fetchEvents(currentUserId)
+      .then(setEvents)
+      .catch(() => {/* Fehlerbehandlung */})
+  }, [currentUserId])
   const activeTab = useAppStore((s) => s.activeTab)
   const setActiveTab = useAppStore((s) => s.setActiveTab)
   const contacts = useAppStore((s) => s.contacts)
@@ -75,7 +82,22 @@ export default function CalendarPage() {
   const [calendarView, setCalendarView] = useState<"day" | "week" | "month">("month")
   const [calendarDate, setCalendarDate] = useState(new Date())
 
-  const addEvent = (event: Event) => addEventRaw({ ...event, date: normalizeDateToMidnight(event.date) })
+  const addEvent = async (event: Event) => {
+    if (!currentUserId) return
+    try {
+      const saved = await addEventApi({
+        userId: currentUserId,
+        title: event.title,
+        date: toDateString(event.date),
+        startTime: event.startTime,
+        endTime: event.endTime,
+        description: event.description,
+      })
+      setEvents((prev) => [...prev, saved])
+    } catch (err) {
+      // Fehlerbehandlung
+    }
+  }
   const updateEvent = (event: Event) => updateEventRaw({ ...event, date: normalizeDateToMidnight(event.date) })
 
   // --- Erinnerungen ---
@@ -480,15 +502,6 @@ export default function CalendarPage() {
 
   return (
     <div className="container py-4 md:py-6 min-h-screen px-4" style={{ minHeight: "100vh", overflowY: "auto" }}>
-      <style jsx global>{`
-        @media (max-width: 640px) {
-          .mobile-card-longer {
-            padding-top: 2.5rem !important;
-            padding-bottom: 2.5rem !important;
-            min-height: 340px !important;
-          }
-        }
-      `}</style>
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-4">
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Kalender</h1>
         <div className="flex gap-2">
@@ -512,7 +525,7 @@ export default function CalendarPage() {
 
         <TabsContent value="all" className="space-y-4">
           <div className="grid gap-4 lg:grid-cols-3">
-            <Card className="lg:col-span-2 mt-0 mb-8 sm:mb-8 mobile-card-longer" style={{ marginBottom: "2rem", marginTop: 0 }}>
+            <Card className="lg:col-span-2">
               <CardHeader>
                 <CardTitle>Alle Termine</CardTitle>
                 <CardDescription>Persönliche und Gruppentermine in einer Übersicht</CardDescription>
@@ -543,7 +556,7 @@ export default function CalendarPage() {
 
         <TabsContent value="personal" className="space-y-4">
           <div className="grid gap-4 lg:grid-cols-3">
-            <Card className="lg:col-span-2 mt-0 mb-8 sm:mb-8" style={{ marginBottom: "2rem", marginTop: 0 }}>
+            <Card className="lg:col-span-2">
               <CardHeader>
                 <CardTitle>Persönliche Termine</CardTitle>
                 <CardDescription>Verwalten Sie Ihre persönlichen Termine</CardDescription>
@@ -574,7 +587,7 @@ export default function CalendarPage() {
 
         <TabsContent value="groups" className="space-y-4">
           <div className="grid gap-4 lg:grid-cols-3">
-            <Card className="lg:col-span-2 mt-0 mb-8 sm:mb-8" style={{ marginBottom: "2rem", marginTop: 0 }}>
+            <Card className="lg:col-span-2">
               <CardHeader>
                 <CardTitle>Gruppentermine</CardTitle>
                 <CardDescription>Gemeinsame Kalender mit Teams, Familie oder Freunden</CardDescription>

@@ -10,6 +10,7 @@ import { GroupDialog, type Group } from "@/components/group-dialog"
 import { useToast } from "@/hooks/use-toast"
 import { Badge } from "@/components/ui/badge"
 import { useAppStore } from "@/lib/store"
+import { fetchGroups, addGroupApi } from "./groupsApi"
 
 type Contact = {
   id: string
@@ -86,7 +87,22 @@ export default function GroupsPage() {
     },
   ])
 
-  const { groups, addGroup, updateGroup, deleteGroup } = useAppStore()
+  // Gruppen aus DB
+  const [groups, setGroups] = useState<Group[]>([])
+  const [loadingGroups, setLoadingGroups] = useState(false)
+  const [errorGroups, setErrorGroups] = useState<string | null>(null)
+  // Aktueller User (z.B. aus Context)
+  const currentUserId = "current-user" // TODO: aus Context holen
+
+  // Gruppen aus Datenbank laden
+  React.useEffect(() => {
+    if (!currentUserId) return
+    setLoadingGroups(true)
+    fetchGroups(currentUserId)
+      .then(setGroups)
+      .catch((err) => setErrorGroups(err.message))
+      .finally(() => setLoadingGroups(false))
+  }, [currentUserId])
 
   const handleAddGroup = () => {
     setSelectedGroup(undefined)
@@ -99,21 +115,20 @@ export default function GroupsPage() {
   }
 
   const handleSaveGroup = (group: Group) => {
-    if (selectedGroup) {
-      // Update existing group
-      updateGroup(group)
-      toast({
-        title: "Gruppe aktualisiert",
-        description: `"${group.name}" wurde erfolgreich aktualisiert.`,
+    // Neue Gruppe per API anlegen
+    addGroupApi({
+      name: group.name,
+      description: group.description,
+      members: group.members.map((m) => m.id),
+    })
+      .then((newGroup) => {
+        setGroups((prev) => [...prev, newGroup])
+        toast({
+          title: "Gruppe erstellt",
+          description: `"${group.name}" wurde erfolgreich erstellt.`,
+        })
       })
-    } else {
-      // Add new group
-      addGroup(group)
-      toast({
-        title: "Gruppe erstellt",
-        description: `"${group.name}" wurde erfolgreich erstellt.`,
-      })
-    }
+      .catch((err) => toast({ title: "Fehler", description: err.message, variant: "destructive" }))
   }
 
 const handleDeleteGroup = (id: string) => {
@@ -129,6 +144,8 @@ const handleDeleteGroup = (id: string) => {
 
   // Filter groups based on search query and active tab
   const filteredGroups = groups.filter(
+  if (loadingGroups) return <div className="p-8 text-center">Gruppen werden geladen...</div>
+  if (errorGroups) return <div className="p-8 text-center text-red-500">{errorGroups}</div>
     (group) =>
       group.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       group.description.toLowerCase().includes(searchQuery.toLowerCase()),

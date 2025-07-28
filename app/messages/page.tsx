@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useEffect, useState, useRef } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -41,8 +41,8 @@ import { GroupDialog, type Group } from "@/components/group-dialog"
 import { useSearchParams } from "next/navigation"
 import { generateChatIdFromMembers, groupMessagesByChatId } from "@/lib/chat-utils"
 import type { Message as MessageType } from "@/types/message"
-
 import { addNotificationIfEnabled } from "@/lib/notify"
+import { fetchMessages, sendMessageApi } from "./messagesApi"
 
 // Neue Imports für erweiterte Features
 import { RichTextEditor } from "@/components/rich-text-editor"
@@ -162,27 +162,7 @@ function getConflictingEvents(event: Event, allEvents: Event[], userIds: string[
   })
 }
 
-export default function MessagesPage({ conversationId }: { conversationId?: string } = {}) {
-  // ...alle bisherigen useState und useEffect Hooks...
-  // (Die Variable showOnlyChatMobile MUSS nach isMobile deklariert werden)
-  // (Deshalb erst nach allen useState/useEffect Hooks deklarieren!)
-
-  // ...nach Deklaration von isMobile (also nach allen Hooks!):
-  // (isMobile ist erst ab Zeile 928 initialisiert!)
-  // ...alle useState/useEffect Hooks...
-  // isMobile ist jetzt initialisiert:
-  // Entferne doppelte Deklaration!
-  // Hydration-sichere Zeit/Datum-Formatierung (immer im Render-Scope verfügbar)
-  const [clientHasMounted, setClientHasMounted] = useState(false)
-  useEffect(() => { setClientHasMounted(true) }, [])
-  function safeFormatMessageTime(isoString: string) {
-    if (!clientHasMounted) return ""
-    return formatMessageTime(isoString)
-  }
-  function safeFormatChatDate(date: Date) {
-    if (!clientHasMounted) return ""
-    return formatChatDate(date)
-  }
+export default function MessagesPage() {
   const searchParams = useSearchParams()
   const [searchQuery, setSearchQuery] = useState("")
   const [newMessageDialogOpen, setNewMessageDialogOpen] = useState(false)
@@ -193,7 +173,9 @@ export default function MessagesPage({ conversationId }: { conversationId?: stri
   const [eventDialogOpen, setEventDialogOpen] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null)
   const [contacts, setContacts] = useState<Contact[]>([])
-  const { messages, addMessage, events, updateEvent, deleteEvent, updateConversation } = useAppStore()
+  // Nachrichten aus DB
+  const [messages, setMessages] = useState<{ [conversationId: string]: MessageType[] }>({})
+  const { events, updateEvent, deleteEvent, updateConversation } = useAppStore()
   const conversations = useAppStore((state) => state.conversations)
   const currentUserId = useAppStore((s) => s.currentUserId)
   const groups = useAppStore((s) => s.groups)
@@ -234,22 +216,24 @@ export default function MessagesPage({ conversationId }: { conversationId?: stri
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null)
   const otherParticipant = activeConversation?.participants.find((c) => c.id !== currentUserId)
   const kontaktId = otherParticipant?.id
-  const conversationIdFromParams = searchParams?.get("conversation")
+  const conversationId = searchParams.get("conversation")
   const forcedParticipants =
     activeConversation?.type === "group"
       ? activeConversation.participants.map((p) => p.id)
       : activeConversation?.participants.map((p) => p.id)
 
-  // conversationId aus Prop oder aus searchParams holen
-  const paramConversationId = conversationId || conversationIdFromParams
   useEffect(() => {
-    if (paramConversationId) {
-      const found = conversations.find((c) => c.id === paramConversationId)
+    if (conversationId) {
+      const found = conversations.find((c) => c.id === conversationId)
       if (found && (!activeConversation || activeConversation.id !== found.id)) {
         setActiveConversation(found)
       }
+      // Nachrichten aus DB laden
+      fetchMessages(conversationId)
+        .then((msgs) => setMessages((prev) => ({ ...prev, [conversationId]: msgs })))
+        .catch(() => toast({ title: "Fehler", description: "Nachrichten konnten nicht geladen werden", variant: "destructive" }))
     }
-  }, [paramConversationId, conversations])
+  }, [conversationId, conversations])
 
   const groupChatMessages = groupMessagesByChatId(messages)
   const chatId = activeConversation ? generateChatIdFromMembers(activeConversation.participants) : ""
@@ -275,7 +259,7 @@ export default function MessagesPage({ conversationId }: { conversationId?: stri
 
   const handleSendMessage = async () => {
     if (!activeConversation || (!messageInput.trim() && uploadedFiles.length === 0)) return
-
+    // Dateien als Base64 (optional)
     const filesWithBase64 = await Promise.all(
       uploadedFiles.map(async (file) => ({
         name: file.name,
@@ -284,22 +268,22 @@ export default function MessagesPage({ conversationId }: { conversationId?: stri
         url: await fileToBase64(file),
       })),
     )
-
-    const content = messageInput
-
-    const newMessage = {
-      id: Math.random().toString(36).substring(2, 9),
-      sender: "me",
-      content,
-      time: new Date().toISOString(),
-      files: filesWithBase64,
+    // Nachricht per API senden
+    try {
+      const sent = await sendMessageApi({
+        conversationId: activeConversation.id,
+        senderId: currentUserId,
+        text: messageInput,
+      })
+      setMessages((prev) => ({
+        ...prev,
+        [activeConversation.id]: [...(prev[activeConversation.id] || []), sent],
+      }))
+      setMessageInput("")
+      setUploadedFiles([])
+    } catch (err: any) {
+      toast({ title: "Fehler", description: err.message, variant: "destructive" })
     }
-
-    // Nachricht lokal hinzufügen
-    addMessage(activeConversation.id, newMessage)
-
-    setMessageInput("")
-    setUploadedFiles([])
   }
 
   // Sprachnachricht senden
@@ -371,10 +355,9 @@ export default function MessagesPage({ conversationId }: { conversationId?: stri
     handleReactionUpdate(messageId, emoji, currentUserId, "remove")
   }
 
-  const currentUser: Contact = {
+  const currentUser = {
     id: currentUserId,
     name: "Du",
-    email: "",
     status: "online",
     avatarUrl: undefined,
   }
@@ -388,16 +371,21 @@ export default function MessagesPage({ conversationId }: { conversationId?: stri
       })
       return
     }
+
     const newConversationId = Math.random().toString(36).substring(2, 9)
+
     const selectedContactObjects = contacts.filter((contact) => selectedContacts.includes(contact.id))
+
     const participants: Contact[] = [currentUser, ...selectedContactObjects].filter(
       (c, i, arr) => arr.findIndex((x) => x.id === c.id) === i,
     )
+
     let groupAvatarUrl: string | undefined = undefined
     if (selectedContacts.length > 1) {
       const selectedAvatars = selectedContactObjects.map((c) => c.avatarUrl).filter(Boolean)
       groupAvatarUrl = selectedAvatars.length > 0 ? selectedAvatars[0] : undefined
     }
+
     const newConversation: Conversation = {
       id: newConversationId,
       name:
@@ -410,20 +398,20 @@ export default function MessagesPage({ conversationId }: { conversationId?: stri
       participants,
       avatarUrl: selectedContacts.length > 1 ? groupAvatarUrl : selectedContactObjects[0]?.avatarUrl,
     }
+
     const updatedConversations = [newConversation, ...conversations]
     const updatedMessages = { ...messages }
     updatedMessages[newConversationId] = []
+
     useAppStore.setState({
       conversations: updatedConversations,
       messages: updatedMessages,
     })
+
     setTimeout(() => {
-      if (typeof window !== "undefined" && window.innerWidth < 1024) {
-        router.push(`/messages/${newConversationId}`)
-      } else {
-        router.push(`/messages?conversation=${newConversationId}`)
-      }
+      router.push(`/messages?conversation=${newConversationId}`)
     }, 0)
+
     setNewMessageDialogOpen(false)
     setSelectedContacts([])
     setNewGroupName("")
@@ -578,8 +566,8 @@ export default function MessagesPage({ conversationId }: { conversationId?: stri
     }
 
     // Validierung: Endzeit darf nicht vor Startzeit liegen
-    const startMinutes = event.startTime.split(":").reduce((h: number, m: string) => h * 60 + parseInt(m, 10), 0)
-    const endMinutes = event.endTime.split(":").reduce((h: number, m: string) => h * 60 + parseInt(m, 10), 0)
+    const startMinutes = event.startTime.split(":").reduce((h, m) => h * 60 + +m)
+    const endMinutes = event.endTime.split(":").reduce((h, m) => h * 60 + +m)
     if (endMinutes <= startMinutes) {
       setInvalidTimeDialogOpen(true)
       return false
@@ -690,12 +678,15 @@ export default function MessagesPage({ conversationId }: { conversationId?: stri
   const scrollAreaRef = useRef<HTMLDivElement | null>(null)
   const scrollAnchorRef = useRef<HTMLDivElement | null>(null)
 
-  // Automatisches Scrollen ans Chat-Ende (auch bei mobiler Ansicht)
   useEffect(() => {
-    if (activeTab === "chat" && activeConversation && scrollAnchorRef.current) {
-      scrollAnchorRef.current.scrollIntoView({ behavior: "smooth", block: "end" })
-    }
-  }, [activeTab, activeConversation, activeConversation?.id ? messages[activeConversation.id]?.length : undefined])
+    const timeout = setTimeout(() => {
+      if (activeTab === "chat" && activeConversation && scrollAnchorRef.current) {
+        scrollAnchorRef.current.scrollIntoView({ behavior: "smooth" })
+      }
+    }, 0)
+
+    return () => clearTimeout(timeout)
+  }, [activeTab, activeConversation, messages[activeConversation?.id]?.length])
 
   useEffect(() => {
     const allContacts = useAppStore.getState().contacts
@@ -712,16 +703,16 @@ export default function MessagesPage({ conversationId }: { conversationId?: stri
     if (convMessages.length === 0) return
     const lastMsg = convMessages[convMessages.length - 1]
 
-    // Keine Benachrichtigung für eigene Nachrichten
-    if (lastMsg.sender === "me") return
-
+    const isIncoming = lastMsg.sender !== "me"
     const user = useAppStore.getState().contacts.find((c) => c.id === currentUserId)
-    const mentionPatterns = [user?.name && `@${user.name}`, user?.email && `@${user.email}`, "@du", "@ich"].filter(Boolean)
+    const mentionPatterns = [user?.name && `@${user.name}`, user?.email && `@${user.email}`, "@du", "@ich"].filter(
+      Boolean,
+    )
     const isMentioned = mentionPatterns.some(
       (pattern) => lastMsg.content && lastMsg.content.toLowerCase().includes(pattern!.toLowerCase()),
     )
 
-    if ((lastMsg.sender !== "me" || isMentioned) && (window as any).__lastNotifiedMsgId !== lastMsg.id) {
+    if ((isIncoming || isMentioned) && (window as any).__lastNotifiedMsgId !== lastMsg.id) {
       addNotificationIfEnabled(isMentioned ? "mention" : "message", {
         title: isMentioned
           ? `Du wurdest erwähnt von ${lastMsg.senderName || lastMsg.sender}`
@@ -894,12 +885,8 @@ export default function MessagesPage({ conversationId }: { conversationId?: stri
         prev.includes(conversation.id) ? prev.filter((id) => id !== conversation.id) : [...prev, conversation.id],
       )
     } else {
-      if (typeof window !== "undefined" && window.innerWidth < 1024) {
-        router.push(`/messages/${conversation.id}`)
-      } else {
-        setActiveConversation(conversation)
-        router.push(`/messages?conversation=${conversation.id}`)
-      }
+      setActiveConversation(conversation)
+      router.push(`/messages?conversation=${conversation.id}`)
     }
   }
 
@@ -927,385 +914,401 @@ export default function MessagesPage({ conversationId }: { conversationId?: stri
     })
   }
 
-
-  // Ermittle, ob Mobilansicht aktiv ist
-  const [isMobile, setIsMobile] = useState(false)
-  useEffect(() => {
-    const checkMobile = () => setIsMobile(typeof window !== "undefined" && window.innerWidth < 1024)
-    checkMobile()
-    window.addEventListener("resize", checkMobile)
-    return () => window.removeEventListener("resize", checkMobile)
-  }, [])
-
-  // Diese Zeile MUSS nach allen useState/useEffect Hooks stehen!
-  // Nur eine Deklaration direkt vor return!
-  const showOnlyChatMobile = isMobile && !!conversationId
-
   return (
-    <div className="container py-0 px-4">
-      {/* Header nur anzeigen, wenn NICHT in mobiler Chat-Detailansicht */}
-      {!showOnlyChatMobile && (
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-4">
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Nachrichten</h1>
-          {selectionMode ? (
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={handleSelectionCancel} size="sm">
-                Abbrechen
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={handleDeleteSelectedConversations}
-                disabled={selectedConversations.length === 0}
-                size="sm"
-              >
-                Löschen ({selectedConversations.length})
-              </Button>
-            </div>
-          ) : (
-            <Button onClick={() => setNewMessageDialogOpen(true)} size="sm">
-              <Plus className="h-4 w-4 mr-2" />
-              Neue Nachricht
+    <div className="container py-4 md:py-6 px-4">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-4">
+        <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Nachrichten</h1>
+        {selectionMode ? (
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleSelectionCancel} size="sm">
+              Abbrechen
             </Button>
-          )}
-        </div>
-      )}
+            <Button
+              variant="destructive"
+              onClick={handleDeleteSelectedConversations}
+              disabled={selectedConversations.length === 0}
+              size="sm"
+            >
+              Löschen ({selectedConversations.length})
+            </Button>
+          </div>
+        ) : (
+          <Button onClick={() => setNewMessageDialogOpen(true)} size="sm">
+            <Plus className="h-4 w-4 mr-2" />
+            Neue Nachricht
+          </Button>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Konversationsliste (nur anzeigen, wenn nicht in mobiler Chat-Detailansicht) */}
-        {!showOnlyChatMobile && (
-          <div className="lg:col-span-1">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg">Konversationen</CardTitle>
-                <div className="relative">
-                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Konversationen durchsuchen..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-8"
-                  />
+        {/* Konversationsliste */}
+        <div className="lg:col-span-1">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg">Konversationen</CardTitle>
+              <div className="relative">
+                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Konversationen durchsuchen..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-8"
+                />
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <ScrollArea className="h-[500px] md:h-[600px]">
+                {filteredConversations.map((conversation) => (
+                  <div
+                    key={conversation.id}
+                    className={`p-3 border-b cursor-pointer hover:bg-accent transition-colors ${
+                      activeConversation?.id === conversation.id ? "bg-accent" : ""
+                    } ${selectedConversations.includes(conversation.id) ? "bg-blue-100" : ""}`}
+                    onClick={() => handleConversationClick(conversation)}
+                    onMouseDown={() => handleConversationMouseDown(conversation.id)}
+                    onMouseUp={handleConversationMouseUp}
+                    onMouseLeave={handleConversationMouseUp}
+                  >
+                    <div className="flex items-center gap-3">
+                      {selectionMode && (
+                        <Checkbox checked={selectedConversations.includes(conversation.id)} onChange={() => {}} />
+                      )}
+                      <Avatar className="h-10 w-10">
+                        <AvatarFallback>{conversation.name.charAt(0).toUpperCase()}</AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <h3 className="font-medium truncate text-sm">{conversation.name}</h3>
+                          <span className="text-xs text-muted-foreground">{formatMessageTime(conversation.time)}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground truncate">{conversation.lastMessage}</p>
+                        {conversation.unread && (
+                          <div className="flex items-center justify-between mt-1">
+                            <div />
+                            <span className="bg-primary text-primary-foreground text-xs px-2 py-1 rounded-full">
+                              {conversation.unread}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </ScrollArea>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Chat-Bereich */}
+        <div className="lg:col-span-2">
+          {activeConversation ? (
+            <Card className="h-[600px] md:h-[700px] flex flex-col">
+              <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+                <div className="flex items-center gap-3">
+                  <Avatar className="h-8 w-8">
+                    <AvatarFallback>{activeConversation.name.charAt(0).toUpperCase()}</AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <h3 className="font-medium text-sm">{activeConversation.name}</h3>
+                    <div className="flex items-center gap-2">
+                      {activeConversation.type === "individual" && otherParticipant && (
+                        <>
+                          <div className={`h-2 w-2 rounded-full ${getStatusColor(otherParticipant.status)}`} />
+                          <span className="text-xs text-muted-foreground capitalize">{otherParticipant.status}</span>
+                        </>
+                      )}
+                      {activeConversation.type === "group" && (
+                        <span className="text-xs text-muted-foreground">
+                          {activeConversation.participants.length} Mitglieder
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="icon" className="h-8 w-8">
+                    <Phone className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8">
+                    <Video className="h-4 w-4" />
+                  </Button>
+                  {activeConversation.type === "group" && (
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleOpenGroupDialog}>
+                      <Users className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
               </CardHeader>
-              <CardContent className="p-0">
-                <ScrollArea className="h-[500px] md:h-[600px]">
-                  {filteredConversations.map((conversation) => (
-                    <div
-                      key={conversation.id}
-                      className={`p-3 border-b cursor-pointer hover:bg-accent transition-colors ${
-                        activeConversation?.id === conversation.id ? "bg-accent" : ""
-                      } ${selectedConversations.includes(conversation.id) ? "bg-blue-100" : ""}`}
-                      onClick={() => handleConversationClick(conversation)}
-                      onMouseDown={() => handleConversationMouseDown(conversation.id)}
-                      onMouseUp={handleConversationMouseUp}
-                      onMouseLeave={handleConversationMouseUp}
-                    >
-                      <div className="flex items-center gap-3">
-                        {selectionMode && (
-                          <Checkbox checked={selectedConversations.includes(conversation.id)} onChange={() => {}} />
-                        )}
-                        <Avatar className="h-10 w-10">
-                          <AvatarFallback>{conversation.name.charAt(0).toUpperCase()}</AvatarFallback>
-                        </Avatar>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between">
-                            <h3 className="font-medium truncate text-sm">{conversation.name}</h3>
-                            <span className="text-xs text-muted-foreground">{safeFormatMessageTime(conversation.time)}</span>
-                          </div>
-                          <p className="text-xs text-muted-foreground truncate">{conversation.lastMessage}</p>
-                          {conversation.unread && (
-                            <div className="flex items-center justify-between mt-1">
-                              <div />
-                              <span className="bg-primary text-primary-foreground text-xs px-2 py-1 rounded-full">
-                                {conversation.unread}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </ScrollArea>
-              </CardContent>
-            </Card>
-          </div>
-        )}
 
-        {/* Chat-Bereich: Desktop ODER mobile Detailansicht */}
-        {(!isMobile || showOnlyChatMobile) && (
-          <div className="lg:col-span-2">
-            {activeConversation ? (
-              <Card className="h-[600px] md:h-[700px] flex flex-col min-h-0 sm:min-h-0 w-full sm:w-auto" style={{ height: isMobile ? '100dvh' : undefined }}>
-                <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-                  <div className="flex items-center gap-3">
-                    <Avatar className="h-8 w-8">
-                      <AvatarFallback>{activeConversation.name.charAt(0).toUpperCase()}</AvatarFallback>
-                    </Avatar>
-                    <div>
-                      <h3 className="font-medium text-sm">{activeConversation.name}</h3>
-                      <div className="flex items-center gap-2">
-                        {activeConversation.type === "individual" && otherParticipant && (
-                          <>
-                            <div className={`h-2 w-2 rounded-full ${getStatusColor(otherParticipant.status)}`} />
-                            <span className="text-xs text-muted-foreground capitalize">{otherParticipant.status}</span>
-                          </>
-                        )}
-                        {activeConversation.type === "group" && (
-                          <span className="text-xs text-muted-foreground">
-                            {activeConversation.participants.length} Mitglieder
-                          </span>
-                        )}
-                      </div>
-                    </div>
+              {/* Infobereich für Termine, Dateien, Umfragen */}
+              <div className="px-4 pt-2 pb-1 flex flex-wrap gap-3 items-center">
+                {/* Nächster Termin */}
+                {getConversationEvents(activeConversation).length > 0 && (
+                  <div className="flex items-center gap-2 bg-muted rounded px-3 py-1 cursor-pointer hover:bg-accent transition" onClick={() => setActiveTab("events")}> 
+                    <CalendarIcon className="h-4 w-4 text-primary" />
+                    <span className="text-xs font-medium">
+                      {(() => {
+                        const nextEvent = getConversationEvents(activeConversation).sort((a, b) => new Date(a.date + 'T' + a.startTime).getTime() - new Date(b.date + 'T' + b.startTime).getTime())[0]
+                        return `${nextEvent.title} (${new Date(nextEvent.date).toLocaleDateString("de-DE")}, ${nextEvent.startTime})`
+                      })()}
+                    </span>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="icon" className="h-8 w-8">
-                      <Phone className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8">
-                      <Video className="h-4 w-4" />
-                    </Button>
-                    {activeConversation.type === "group" && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleOpenGroupDialog}>
-                        <Users className="h-4 w-4" />
-                      </Button>
-                    )}
+                )}
+                {/* Letzte Datei */}
+                {filteredFiles.length > 0 && (
+                  <div className="flex items-center gap-2 bg-muted rounded px-3 py-1 cursor-pointer hover:bg-accent transition" onClick={() => setActiveTab("files")}> 
+                    <FileText className="h-4 w-4 text-primary" />
+                    <span className="text-xs font-medium">
+                      {filteredFiles[0].name.length > 18 ? filteredFiles[0].name.slice(0, 15) + '...' : filteredFiles[0].name}
+                    </span>
                   </div>
-                </CardHeader>
+                )}
+                {/* Laufende Umfrage (nur Gruppe) */}
+                {activeConversation.type === "group" && polls && polls.length > 0 && (
+                  <div className="flex items-center gap-2 bg-muted rounded px-3 py-1 cursor-pointer hover:bg-accent transition" onClick={() => setActiveTab("polls")}> 
+                    <Users className="h-4 w-4 text-primary" />
+                    <span className="text-xs font-medium">
+                      {polls[0].title.length > 18 ? polls[0].title.slice(0, 15) + '...' : polls[0].title}
+                    </span>
+                  </div>
+                )}
+              </div>
 
-                {/* Infobereich für Termine, Dateien, Umfragen - ENTFERNT, damit keine Inhalte über den Tabs erscheinen */}
-                <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
-                  <div
-                    className="bg-muted rounded-b-xl px-4"
-                    style={{
-                      paddingTop: isMobile ? 4 : undefined,
-                      paddingBottom: isMobile ? 16 : undefined,
-                    }}
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
+                <div className="px-4">
+                  <TabsList
+                    className={`grid w-full ${activeConversation.type === "group" ? "grid-cols-4" : "grid-cols-3"}`}
                   >
-                    <TabsList
-                      className={`grid w-full ${activeConversation.type === "group" ? "grid-cols-4" : "grid-cols-3"}`}
-                    >
-                      <TabsTrigger value="chat" className="text-xs">
-                        Chat
+                    <TabsTrigger value="chat" className="text-xs">
+                      Chat
+                    </TabsTrigger>
+                    <TabsTrigger value="events" className="text-xs">
+                      Termine
+                    </TabsTrigger>
+                    <TabsTrigger value="files" className="text-xs">
+                      Dateien
+                    </TabsTrigger>
+                    {activeConversation.type === "group" && (
+                      <TabsTrigger value="polls" className="text-xs">
+                        Umfragen
                       </TabsTrigger>
-                      <TabsTrigger value="events" className="text-xs">
-                        Termine
-                      </TabsTrigger>
-                      <TabsTrigger value="files" className="text-xs">
-                        Dateien
-                      </TabsTrigger>
-                      {activeConversation.type === "group" && (
-                        <TabsTrigger value="polls" className="text-xs">
-                          Umfragen
-                        </TabsTrigger>
-                      )}
-                    </TabsList>
-                  </div>
+                    )}
+                  </TabsList>
+                </div>
 
-                <TabsContent value="chat" className="flex-1 flex flex-col mt-0 px-4" >
-                  {/* Chatbereich mit fixiertem Eingabefeld unten */}
-                  <div className="flex flex-col flex-1 min-h-0 h-full">
-                    <ScrollArea className="flex-1 min-h-[200px] h-0" ref={scrollAreaRef}>
-                      <div className="space-y-3 py-4 flex-1">
-                        {chatMessages.length > 0 ? (
-                          chatMessages.map((message, index) => {
-                            const isMe = message.sender === "me"
-                            const showDate =
-                              index === 0 || safeFormatChatDate(new Date(message.time)) !== safeFormatChatDate(new Date(chatMessages[index - 1].time))
-                            return (
-                              <div key={message.id}>
-                                {showDate && (
-                                  <div className="text-center text-xs text-muted-foreground my-4">
-                                    {safeFormatChatDate(new Date(message.time))}
-                                  </div>
-                                )}
-                                <div className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
-                                  <div
-                                    className={`max-w-[80%] rounded-lg px-3 py-2 ${
-                                      isMe ? "bg-primary text-primary-foreground" : "bg-muted"
-                                    }`}
-                                  >
-                                    {!isMe && activeConversation.type === "group" && (
-                                      <div className="text-xs font-medium mb-1">
-                                        {message.senderName || message.sender}
-                                      </div>
-                                    )}
-                                    {message.content && <div className="text-sm">{message.content}</div>}
-                                    {/* Dateien anzeigen */}
-                                    {message.files && message.files.length > 0 && (
-                                      <div className="mt-2 space-y-2">
-                                        {message.files.map((file, fileIndex) => (
-                                          <div key={fileIndex}>
-                                            {file.type?.startsWith("image/") ? (
-                                              <div className="relative group">
-                                                <img
-                                                  src={file.url || "/placeholder.svg"}
-                                                  alt={file.name}
-                                                  className="max-w-full h-auto rounded cursor-pointer"
-                                                  onClick={() => downloadFile(file)}
-                                                />
-                                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded flex items-center justify-center">
-                                                  <Button
-                                                    variant="secondary"
-                                                    size="sm"
-                                                    onClick={() => downloadFile(file)}
-                                                  >
-                                                    Herunterladen
-                                                  </Button>
-                                                </div>
-                                              </div>
-                                            ) : file.type?.startsWith("audio/") ? (
-                                              <div className="flex items-center gap-2 p-2 bg-background/10 rounded">
-                                                <audio controls className="flex-1">
-                                                  <source src={file.url} type={file.type} />
-                                                </audio>
-                                                <Button variant="ghost" size="sm" onClick={() => downloadFile(file)}>
-                                                  ⬇️
-                                                </Button>
-                                                {"duration" in file && typeof file.duration === "number" && (
-                                                    <span className="text-xs opacity-75">
-                                                        {Math.floor(file.duration / 60)}:
-                                                        {Math.floor(file.duration % 60)
-                                                            .toString()
-                                                            .padStart(2, "0")}
-                                                    </span>
-                                                )}
-                                              </div>
-                                            ) : (
-                                              <div className="flex items-center gap-2 p-2 bg-background/10 rounded">
-                                                <FileText className="h-4 w-4" />
-                                                <span className="text-xs flex-1">{file.name}</span>
-                                                <span className="text-xs opacity-75">
-                                                  ({(file.size / 1024).toFixed(1)} KB)
-                                                </span>
-                                                <Button variant="ghost" size="sm" onClick={() => downloadFile(file)}>
-                                                  ⬇️
-                                                </Button>
-                                              </div>
-                                            )}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                    <div className="flex items-center justify-between mt-1">
-                                      <span className="text-xs opacity-75">{safeFormatMessageTime(message.time)}</span>
-                                      {isMe && <Check className="h-3 w-3 opacity-75" />}
-                                    </div>
-                                  </div>
+                <TabsContent value="chat" className="flex-1 flex flex-col mt-0">
+                  <ScrollArea className="flex-1 px-4" ref={scrollAreaRef}>
+                    <div className="space-y-3 py-4">
+                      {chatMessages.length > 0 ? (
+                        chatMessages.map((message, index) => {
+                          const isMe = message.sender === "me"
+                          const showDate =
+                            index === 0 ||
+                            formatChatDate(new Date(message.time)) !==
+                              formatChatDate(new Date(chatMessages[index - 1].time))
+
+                          return (
+                            <div key={message.id}>
+                              {showDate && (
+                                <div className="text-center text-xs text-muted-foreground my-4">
+                                  {formatChatDate(new Date(message.time))}
                                 </div>
-                                {/* Reaktionen */}
-                                {messageReactions[message.id] && messageReactions[message.id].length > 0 && (
-                                  <div className={`flex ${isMe ? "justify-end" : "justify-start"} mt-1`}>
-                                    <MessageReactions
-                                      messageId={message.id}
-                                      reactions={messageReactions[message.id]}
-                                      currentUserId={currentUserId}
-                                      onAddReaction={handleAddReaction}
-                                      onRemoveReaction={handleRemoveReaction}
-                                    />
-                                  </div>
-                                )}
-                              </div>
-                            )
-                          })
-                        ) : (
-                          <div className="text-center py-8 text-muted-foreground flex-1">
-                            Noch keine Nachrichten. Starten Sie die Konversation!
-                          </div>
-                        )}
-                        <div ref={scrollAnchorRef} />
-                      </div>
-                    </ScrollArea>
-                    {/* Eingabebereich fixiert am unteren Rand */}
-                    <div className="sticky bottom-0 left-0 w-full bg-background z-10 border-t">
-                      <CardFooter className="flex-col gap-3 p-4">
-                        {/* Hochgeladene Dateien anzeigen */}
-                        {uploadedFiles.length > 0 && (
-                          <div className="w-full">
-                            <div className="flex flex-wrap gap-2 p-2 bg-muted rounded-md">
-                              {uploadedFiles.map((file, index) => (
+                              )}
+                              <div className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
                                 <div
-                                  key={index}
-                                  className="flex items-center gap-2 bg-background px-2 py-1 rounded text-sm"
+                                  className={`max-w-[80%] rounded-lg px-3 py-2 ${
+                                    isMe ? "bg-primary text-primary-foreground" : "bg-muted"
+                                  }`}
                                 >
-                                  <span className="text-xs">{file.name}</span>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-4 w-4 p-0"
-                                    onClick={() => setUploadedFiles((prev) => prev.filter((_, i) => i !== index))}
-                                  >
-                                    <X className="h-3 w-3" />
-                                  </Button>
+                                  {!isMe && activeConversation.type === "group" && (
+                                    <div className="text-xs font-medium mb-1">
+                                      {message.senderName || message.sender}
+                                    </div>
+                                  )}
+
+                                  {message.content && <div className="text-sm">{message.content}</div>}
+
+                                  {/* Dateien anzeigen */}
+                                  {message.files && message.files.length > 0 && (
+                                    <div className="mt-2 space-y-2">
+                                      {message.files.map((file, fileIndex) => (
+                                        <div key={fileIndex}>
+                                          {file.type?.startsWith("image/") ? (
+                                            <div className="relative group">
+                                              <img
+                                                src={file.url || "/placeholder.svg"}
+                                                alt={file.name}
+                                                className="max-w-full h-auto rounded cursor-pointer"
+                                                onClick={() => downloadFile(file)}
+                                              />
+                                              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded flex items-center justify-center">
+                                                <Button
+                                                  variant="secondary"
+                                                  size="sm"
+                                                  onClick={() => downloadFile(file)}
+                                                >
+                                                  Herunterladen
+                                                </Button>
+                                              </div>
+                                            </div>
+                                          ) : file.type?.startsWith("audio/") ? (
+                                            <div className="flex items-center gap-2 p-2 bg-background/10 rounded">
+                                              <audio controls className="flex-1">
+                                                <source src={file.url} type={file.type} />
+                                              </audio>
+                                              <Button variant="ghost" size="sm" onClick={() => downloadFile(file)}>
+                                                ⬇️
+                                              </Button>
+                                              {file.duration && (
+                                                <span className="text-xs opacity-75">
+                                                  {Math.floor(file.duration / 60)}:
+                                                  {Math.floor(file.duration % 60)
+                                                    .toString()
+                                                    .padStart(2, "0")}
+                                                </span>
+                                              )}
+                                            </div>
+                                          ) : (
+                                            <div className="flex items-center gap-2 p-2 bg-background/10 rounded">
+                                              <FileText className="h-4 w-4" />
+                                              <span className="text-xs flex-1">{file.name}</span>
+                                              <span className="text-xs opacity-75">
+                                                ({(file.size / 1024).toFixed(1)} KB)
+                                              </span>
+                                              <Button variant="ghost" size="sm" onClick={() => downloadFile(file)}>
+                                                ⬇️
+                                              </Button>
+                                            </div>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  <div className="flex items-center justify-between mt-1">
+                                    <span className="text-xs opacity-75">{formatMessageTime(message.time)}</span>
+                                    {isMe && <Check className="h-3 w-3 opacity-75" />}
+                                  </div>
                                 </div>
-                              ))}
+                              </div>
+
+                              {/* Reaktionen */}
+                              {messageReactions[message.id] && messageReactions[message.id].length > 0 && (
+                                <div className={`flex ${isMe ? "justify-end" : "justify-start"} mt-1`}>
+                                  <MessageReactions
+                                    messageId={message.id}
+                                    reactions={messageReactions[message.id]}
+                                    currentUserId={currentUserId}
+                                    onAddReaction={handleAddReaction}
+                                    onRemoveReaction={handleRemoveReaction}
+                                  />
+                                </div>
+                              )}
                             </div>
-                          </div>
-                        )}
-                        <div className="flex items-end gap-2 w-full">
-                          <div className="flex-1">
-                            {isRichTextMode ? (
-                              <RichTextEditor
-                                value={messageInput}
-                                onChange={setMessageInput}
-                                placeholder="Nachricht eingeben..."
-                                className="min-h-[40px]"
-                              />
-                            ) : (
-                              <Input
-                                placeholder="Nachricht eingeben..."
-                                value={messageInput}
-                                onChange={(e) => setMessageInput(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter" && !e.shiftKey) {
-                                    e.preventDefault()
-                                    handleSendMessage()
-                                  }
-                                }}
-                                className="min-h-[40px]"
-                              />
-                            )}
-                          </div>
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            onClick={() => setIsRichTextMode(!isRichTextMode)}
-                            className={`h-10 w-10 ${isRichTextMode ? "bg-accent" : ""}`}
-                          >
-                            <span className="text-xs">RT</span>
-                          </Button>
-                          <Button variant="outline" size="icon" onClick={handleFileUpload} className="h-10 w-10">
-                            <Paperclip className="h-4 w-4" />
-                          </Button>
-                          <VoiceMessage onSend={handleSendVoiceMessage} />
-                          <Button onClick={handleSendMessage} size="icon" className="h-10 w-10">
-                            <Send className="h-4 w-4" />
-                          </Button>
+                          )
+                        })
+                      ) : (
+                        <div className="text-center py-8 text-muted-foreground">
+                          Noch keine Nachrichten. Starten Sie die Konversation!
                         </div>
-                      </CardFooter>
+                      )}
+                      <div ref={scrollAnchorRef} />
                     </div>
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      onChange={handleChatFileSelect}
-                      multiple
-                      className="hidden"
-                      accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.txt"
-                    />
-                  </div>
+                  </ScrollArea>
+
+                  {/* Eingabebereich */}
+                  <CardFooter className="flex-col gap-3 p-4">
+                    {/* Hochgeladene Dateien anzeigen */}
+                    {uploadedFiles.length > 0 && (
+                      <div className="w-full">
+                        <div className="flex flex-wrap gap-2 p-2 bg-muted rounded-md">
+                          {uploadedFiles.map((file, index) => (
+                            <div
+                              key={index}
+                              className="flex items-center gap-2 bg-background px-2 py-1 rounded text-sm"
+                            >
+                              <span className="text-xs">{file.name}</span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-4 w-4 p-0"
+                                onClick={() => setUploadedFiles((prev) => prev.filter((_, i) => i !== index))}
+                              >
+                                <X className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-end gap-2 w-full">
+                      <div className="flex-1">
+                        {isRichTextMode ? (
+                          <RichTextEditor
+                            value={messageInput}
+                            onChange={setMessageInput}
+                            placeholder="Nachricht eingeben..."
+                            className="min-h-[40px]"
+                          />
+                        ) : (
+                          <Input
+                            placeholder="Nachricht eingeben..."
+                            value={messageInput}
+                            onChange={(e) => setMessageInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && !e.shiftKey) {
+                                e.preventDefault()
+                                handleSendMessage()
+                              }
+                            }}
+                            className="min-h-[40px]"
+                          />
+                        )}
+                      </div>
+
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={() => setIsRichTextMode(!isRichTextMode)}
+                        className={`h-10 w-10 ${isRichTextMode ? "bg-accent" : ""}`}
+                      >
+                        <span className="text-xs">RT</span>
+                      </Button>
+
+                      <Button variant="outline" size="icon" onClick={handleFileUpload} className="h-10 w-10">
+                        <Paperclip className="h-4 w-4" />
+                      </Button>
+
+                      <VoiceMessage onSend={handleSendVoiceMessage} />
+
+                      <Button onClick={handleSendMessage} size="icon" className="h-10 w-10">
+                        <Send className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </CardFooter>
+
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleChatFileSelect}
+                    multiple
+                    className="hidden"
+                    accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.txt"
+                  />
                 </TabsContent>
 
-                <TabsContent value="events" className="flex flex-col mt-0 px-0">
-                  {/* Header direkt unter dem grauen Tab-Bar-Kasten, ohne Abstand */}
-                  <div className="flex justify-between items-center px-4 pt-0 pb-0">
-                    <h3 className="text-lg font-medium">Gemeinsame Termine</h3>
-                    <Button onClick={handleAddEvent} size="sm">
-                      <Plus className="h-4 w-4 mr-2" />
-                      Termin hinzufügen
-                    </Button>
-                  </div>
-                  <div className="flex-1 flex flex-col">
-                    <ScrollArea className="flex-1 mt-0 px-4 pt-2">
+                <TabsContent value="events" className="flex-1 px-4">
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <h3 className="text-lg font-medium">Gemeinsame Termine</h3>
+                      <Button onClick={handleAddEvent} size="sm">
+                        <Plus className="h-4 w-4 mr-2" />
+                        Termin hinzufügen
+                      </Button>
+                    </div>
+                    <ScrollArea className="h-[400px]">
                       <div className="space-y-3">
                         {getConversationEvents(activeConversation).map((event) => (
                           <Card
@@ -1327,147 +1330,142 @@ export default function MessagesPage({ conversationId }: { conversationId?: stri
                   </div>
                 </TabsContent>
 
-                <TabsContent value="files" className="flex-1 flex flex-col mt-0 px-4">
-                  <div className="flex-1 flex flex-col">
-                    <ScrollArea className="flex-1">
-                      <div className="space-y-4 py-4">
-                        <div className="flex justify-between items-center">
-                          <h3 className="text-lg font-medium">Geteilte Dateien</h3>
-                          <Tabs value={fileTab} onValueChange={(v) => setFileTab(v as any)}>
-                            <TabsList>
-                              <TabsTrigger value="all" className="text-xs">
-                                Alle
-                              </TabsTrigger>
-                              <TabsTrigger value="images" className="text-xs">
-                                Bilder
-                              </TabsTrigger>
-                              <TabsTrigger value="files" className="text-xs">
-                                Dateien
-                              </TabsTrigger>
-                            </TabsList>
-                          </Tabs>
-                        </div>
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                          {filteredFiles.map((file, index) => (
-                            <Card
-                              key={index}
-                              className="p-2 cursor-pointer hover:bg-accent"
-                              onClick={() => downloadFile(file)}
-                            >
-                              {file.type?.startsWith("image/") ? (
-                                <img
-                                  src={file.url || "/placeholder.svg"}
-                                  alt={file.name}
-                                  className="w-full h-24 object-cover rounded mb-2"
-                                />
-                              ) : (
-                                <div className="w-full h-24 bg-muted rounded mb-2 flex items-center justify-center">
-                                  <FileText className="h-6 w-6 text-muted-foreground" />
-                                </div>
-                              )}
-                              <div className="space-y-1">
-                                <p className="text-xs font-medium truncate">{file.name}</p>
-                                <p className="text-xs text-muted-foreground">Von {file.senderName || file.sender}</p>
-                                <p className="text-xs text-muted-foreground">
-                                  {file.time && safeFormatMessageTime(file.time)}
-                                </p>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="w-full mt-2 h-6 text-xs"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    downloadFile(file)
-                                  }}
-                                >
-                                  Herunterladen
-                                </Button>
+                <TabsContent value="files" className="flex-1 px-4">
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <h3 className="text-lg font-medium">Geteilte Dateien</h3>
+                      <Tabs value={fileTab} onValueChange={(v) => setFileTab(v as any)}>
+                        <TabsList>
+                          <TabsTrigger value="all" className="text-xs">
+                            Alle
+                          </TabsTrigger>
+                          <TabsTrigger value="images" className="text-xs">
+                            Bilder
+                          </TabsTrigger>
+                          <TabsTrigger value="files" className="text-xs">
+                            Dateien
+                          </TabsTrigger>
+                        </TabsList>
+                      </Tabs>
+                    </div>
+                    <ScrollArea className="h-[400px]">
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                        {filteredFiles.map((file, index) => (
+                          <Card
+                            key={index}
+                            className="p-2 cursor-pointer hover:bg-accent"
+                            onClick={() => downloadFile(file)}
+                          >
+                            {file.type?.startsWith("image/") ? (
+                              <img
+                                src={file.url || "/placeholder.svg"}
+                                alt={file.name}
+                                className="w-full h-24 object-cover rounded mb-2"
+                              />
+                            ) : (
+                              <div className="w-full h-24 bg-muted rounded mb-2 flex items-center justify-center">
+                                <FileText className="h-6 w-6 text-muted-foreground" />
                               </div>
-                            </Card>
-                          ))}
-                        </div>
+                            )}
+                            <div className="space-y-1">
+                              <p className="text-xs font-medium truncate">{file.name}</p>
+                              <p className="text-xs text-muted-foreground">Von {file.senderName || file.sender}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {file.time && formatMessageTime(file.time)}
+                              </p>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="w-full mt-2 h-6 text-xs"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  downloadFile(file)
+                                }}
+                              >
+                                Herunterladen
+                              </Button>
+                            </div>
+                          </Card>
+                        ))}
                       </div>
                     </ScrollArea>
                   </div>
                 </TabsContent>
 
-                  {activeConversation.type === "group" && (
-                    <TabsContent value="polls" className="flex-1 flex flex-col mt-0 px-4">
-                      <div className="flex-1 flex flex-col">
-                        <ScrollArea className="flex-1">
-                          <div className="space-y-4 py-4">
-                            <div className="flex justify-between items-center">
-                              <h3 className="text-lg font-medium">Umfragen</h3>
-                              <Button onClick={() => setNewPollDialogOpen(true)} size="sm">
-                                <Plus className="h-4 w-4 mr-2" />
-                                Umfrage erstellen
-                              </Button>
-                            </div>
-                            <div className="space-y-4">
-                              {polls.map((poll) => (
-                                <Card key={poll.id} className="p-3">
-                                  <div className="space-y-3">
-                                    <div>
-                                      <h4 className="font-medium text-sm">{poll.title}</h4>
-                                      {poll.description && (
-                                        <p className="text-xs text-muted-foreground">{poll.description}</p>
-                                      )}
-                                      <p className="text-xs text-muted-foreground mt-1">
-                                        Von {getCreatorName(poll.createdBy)} •{" "}
-                                        {new Date(poll.createdAt).toLocaleDateString("de-DE")}
-                                      </p>
-                                    </div>
-                                    <div className="space-y-2">
-                                      {poll.options.map((option: any) => {
-                                        const hasVoted = option.votes.includes(currentUserId)
-                                        const percentage =
-                                          poll.options.reduce((sum: number, opt: any) => sum + opt.votes.length, 0) > 0
-                                            ? (option.votes.length /
-                                                poll.options.reduce((sum: number, opt: any) => sum + opt.votes.length, 0)) *
-                                              100
-                                            : 0
-                                        return (
-                                          <div
-                                            key={option.id}
-                                            className={`p-2 rounded border cursor-pointer transition-colors ${
-                                              hasVoted ? "bg-primary/10 border-primary" : "hover:bg-accent"
-                                            }`}
-                                            onClick={() => handleVote(poll.id, option.id)}
-                                          >
-                                            <div className="flex items-center justify-between">
-                                              <span className="text-xs">{option.text}</span>
-                                              <span className="text-xs text-muted-foreground">
-                                                {option.votes.length} - {percentage.toFixed(1)}%
-                                              </span>
-                                            </div>
-                                          </div>
-                                        )
-                                      })}
-                                    </div>
-                                  </div>
-                                </Card>
-                              ))}
-                            </div>
-                          </div>
-                        </ScrollArea>
+                {activeConversation.type === "group" && (
+                  <TabsContent value="polls" className="flex-1 px-4">
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center">
+                        <h3 className="text-lg font-medium">Umfragen</h3>
+                        <Button onClick={() => setNewPollDialogOpen(true)} size="sm">
+                          <Plus className="h-4 w-4 mr-2" />
+                          Umfrage erstellen
+                        </Button>
                       </div>
-                    </TabsContent>
-                  )}
-                </Tabs>
-              </Card>
-            ) : (
-              <Card className="h-[600px] md:h-[700px] flex items-center justify-center">
-                <CardContent className="text-center">
-                  <MessageSquare className="h-10 w-10 mx-auto mb-4 text-muted-foreground" />
-                  <h2 className="text-xl font-bold tracking-tight mb-2">Konversation auswählen</h2>
-                  <p className="text-muted-foreground text-sm">
-                    Wählen Sie eine bestehende Konversation aus oder starten Sie eine neue, um Nachrichten anzuzeigen.
-                  </p>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        )}
+                      <ScrollArea className="h-[400px]">
+                        <div className="space-y-4">
+                          {polls.map((poll) => (
+                            <Card key={poll.id} className="p-3">
+                              <div className="space-y-3">
+                                <div>
+                                  <h4 className="font-medium text-sm">{poll.title}</h4>
+                                  {poll.description && (
+                                    <p className="text-xs text-muted-foreground">{poll.description}</p>
+                                  )}
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    Von {getCreatorName(poll.createdBy)} •{" "}
+                                    {new Date(poll.createdAt).toLocaleDateString("de-DE")}
+                                  </p>
+                                </div>
+                                <div className="space-y-2">
+                                  {poll.options.map((option: any) => {
+                                    const hasVoted = option.votes.includes(currentUserId)
+                                    const percentage =
+                                      poll.options.reduce((sum: number, opt: any) => sum + opt.votes.length, 0) > 0
+                                        ? (option.votes.length /
+                                            poll.options.reduce((sum: number, opt: any) => sum + opt.votes.length, 0)) *
+                                          100
+                                        : 0
+                                    return (
+                                      <div
+                                        key={option.id}
+                                        className={`p-2 rounded border cursor-pointer transition-colors ${
+                                          hasVoted ? "bg-primary/10 border-primary" : "hover:bg-accent"
+                                        }`}
+                                        onClick={() => handleVote(poll.id, option.id)}
+                                      >
+                                        <div className="flex items-center justify-between">
+                                          <span className="text-xs">{option.text}</span>
+                                          <span className="text-xs text-muted-foreground">
+                                            {option.votes.length} - {percentage.toFixed(1)}%
+                                          </span>
+                                        </div>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            </Card>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    </div>
+                  </TabsContent>
+                )}
+              </Tabs>
+            </Card>
+          ) : (
+            <Card className="h-[600px] md:h-[700px] flex items-center justify-center">
+              <CardContent className="text-center">
+                <MessageSquare className="h-10 w-10 mx-auto mb-4 text-muted-foreground" />
+                <h2 className="text-xl font-bold tracking-tight mb-2">Konversation auswählen</h2>
+                <p className="text-muted-foreground text-sm">
+                  Wählen Sie eine bestehende Konversation aus oder starten Sie eine neue, um Nachrichten anzuzeigen.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
       </div>
 
       {/* Dialoge */}
@@ -1629,53 +1627,21 @@ export default function MessagesPage({ conversationId }: { conversationId?: stri
       <EventDialog
         open={eventDialogOpen}
         onOpenChange={setEventDialogOpen}
-        event={selectedEvent ? {
-          id: selectedEvent.id,
-          title: selectedEvent.title,
-          startTime: selectedEvent.startTime,
-          endTime: selectedEvent.endTime,
-          date: typeof selectedEvent.date === "string" ? new Date(selectedEvent.date) : selectedEvent.date,
-          description: selectedEvent.description ?? "",
-          category: selectedEvent.category ?? "",
-          location: selectedEvent.location ?? "",
-          reminder: selectedEvent.reminder ?? "",
-          sharedWith: selectedEvent.sharedWith,
-          isGroupEvent: selectedEvent.isGroupEvent ?? false,
-          groupId: selectedEvent.groupId ?? ""
-        } : undefined}
-        onSave={(event) => {
-          const result = handleSaveEvent(event)
-          // Rückgabewert anpassen: boolean → "created" | "updated" | false | undefined
-          if (result === true) return "created"
-          if (result === false) return false
-          return undefined
-        }}
+        event={selectedEvent}
+        onSave={handleSaveEvent}
         onDelete={handleDeleteEvent}
         contacts={contacts}
         forcedParticipants={forcedParticipants}
         currentUserId={currentUserId}
         groups={groups}
-        events={events.map(e => ({
-          id: e.id,
-          title: e.title,
-          startTime: e.startTime,
-          endTime: e.endTime,
-          date: typeof e.date === "string" ? new Date(e.date) : e.date,
-          description: e.description ?? "",
-          category: e.category ?? "",
-          location: e.location ?? "",
-          reminder: e.reminder ?? "",
-          sharedWith: e.sharedWith,
-          isGroupEvent: e.isGroupEvent ?? false,
-          groupId: e.groupId ?? ""
-        }))}
+        events={events}
       />
 
       {/* Group Dialog */}
       <GroupDialog
         open={groupDialogOpen}
         onOpenChange={setGroupDialogOpen}
-        group={groupToEdit ?? undefined}
+        group={groupToEdit}
         onSave={handleSaveGroup}
         onDelete={handleDeleteGroup}
         contacts={contacts}
@@ -1712,13 +1678,12 @@ export default function MessagesPage({ conversationId }: { conversationId?: stri
               <Label>Optionen</Label>
               <div className="space-y-2">
                 {newPoll.options.map((option, index) => (
-                  <div key={option.id} className="flex items-center gap-2">
+                  <div key={option.id} className="flex items-center space-x-2">
                     <Input
                       id={`option-${index}`}
                       value={option.text}
                       onChange={(e) => updateNewPollOptionText(index, e.target.value)}
                       placeholder={`Option ${index + 1}`}
-                      className="flex-1"
                     />
                   </div>
                 ))}

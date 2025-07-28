@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import Link from "next/link"
 import { useUser } from '@/contexts/UserContext'
+import { loginUser } from "./loginUser"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
@@ -34,40 +35,31 @@ export default function LoginPage() {
 
     setIsLoading(true)
 
-    // Nutzer aus LocalStorage laden
-    const usersRaw = localStorage.getItem("users")
-    const users = usersRaw ? JSON.parse(usersRaw) : []
-
-    // Nutzer suchen & Passwort prüfen
-    const user = users.find((u: any) => u.email === email && u.password === password)
-    if (!user) {
-      setIsLoading(false)
-      toast({
-        title: "Fehler",
-        description: "E-Mail oder Passwort ist falsch.",
-        variant: "destructive",
+    // Login per API
+    try {
+      const user = await loginUser(email, password)
+      login({
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        status: user.status,
+        bio: user.bio,
+        avatar: user.avatar,
       })
-      return
-    }
-
-    // Login im Context und LocalStorage setzen
-    login({
-      name: user.name,
-      email: user.email,
-      phone: user.phone,
-      status: user.status,
-      bio: user.bio,
-      avatar: user.avatar,
-    })
-
-    setTimeout(() => {
       setIsLoading(false)
       toast({
         title: "Erfolgreich angemeldet",
         description: "Sie wurden erfolgreich angemeldet.",
       })
       router.push("/calendar")
-    }, 1000)
+    } catch (err: any) {
+      setIsLoading(false)
+      toast({
+        title: "Fehler",
+        description: err?.message || "Login fehlgeschlagen.",
+        variant: "destructive",
+      })
+    }
   }
 
   return (

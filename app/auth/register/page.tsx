@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast"
 import Link from "next/link"
 import { useUser } from "@/contexts/UserContext"
 import { useAppStore } from "@/lib/store"
+import { registerUser } from "./registerUser"
 
 export default function RegisterPage() {
   const [firstName, setFirstName] = useState("")
@@ -22,6 +23,7 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const router = useRouter()
   const { toast } = useToast()
   const { login } = useUser()
@@ -29,94 +31,59 @@ export default function RegisterPage() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
+    setError(null)
 
+    // Validierung
     if (!firstName || !lastName || !phone || !email || !password || !confirmPassword) {
-      toast({
-        title: "Fehler",
-        description: "Bitte füllen Sie alle Felder aus.",
-        variant: "destructive",
-      })
+      setError("Bitte füllen Sie alle Felder aus.")
       return
     }
-
+    if (password.length < 8) {
+      setError("Das Passwort muss mindestens 8 Zeichen lang sein.")
+      return
+    }
     if (password !== confirmPassword) {
-      toast({
-        title: "Fehler",
-        description: "Passwörter stimmen nicht überein.",
-        variant: "destructive",
-      })
+      setError("Passwörter stimmen nicht überein.")
       return
     }
 
     setIsLoading(true)
-
-    // Registrierte Nutzer aus dem LocalStorage laden
-    const usersRaw = localStorage.getItem("users")
-    const users = usersRaw ? JSON.parse(usersRaw) : []
-
-    // Prüfen, ob die E-Mail schon existiert
-    const exists = users.some((u: any) => u.email === email)
-    if (exists) {
-      setIsLoading(false)
-      toast({
-        title: "Fehler",
-        description: "Ein Konto mit dieser E-Mail existiert bereits.",
-        variant: "destructive",
+    try {
+      const fullName = `${firstName} ${lastName}`
+      const res = await registerUser(fullName, email, password, phone)
+      if (res?.error) {
+        setError(res.error)
+        setIsLoading(false)
+        return
+      }
+      addContact({
+        id: res.id,
+        name: fullName,
+        email,
+        phone,
+        status: "online",
+        isRegistered: true,
+        department: "",
       })
-      return
-    }
-
-    // Neues Benutzerobjekt
-    const fullName = `${firstName} ${lastName}`
-    const newUserId = Math.random().toString(36).substring(2, 9)
-
-    const newUser = {
-      id: newUserId,
-      name: fullName,
-      email,
-      phone,
-      password,
-      status: "online",
-      bio: "",
-      avatar: "",
-    }
-
-    // Nutzer zur Liste hinzufügen und speichern
-    users.push(newUser)
-    localStorage.setItem("users", JSON.stringify(users))
-
-    // Benutzer auch zu den Kontakten hinzufügen
-    addContact({
-      id: newUserId,
-      name: fullName,
-      email,
-      phone,
-      status: "online",
-      isRegistered: true,
-      department: "",
-    })
-
-    // Als aktueller Benutzer setzen
-    setCurrentUserId(newUserId)
-
-    // Direkt einloggen nach Registrierung
-    login({
-      name: fullName,
-      email,
-      phone,
-      status: "online",
-      bio: "",
-      avatar: "",
-    })
-
-    setTimeout(() => {
+      setCurrentUserId(res.id)
+      login({
+        name: fullName,
+        email,
+        phone,
+        status: "online",
+        bio: "",
+        avatar: "",
+      })
       setIsLoading(false)
       toast({
         title: "Erfolgreich registriert",
         description: "Ihr Konto wurde erfolgreich erstellt.",
       })
       router.push("/calendar")
-    }, 1000)
+    } catch (err: any) {
+      setError(err?.message || "Registrierung fehlgeschlagen.")
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -133,6 +100,11 @@ export default function RegisterPage() {
           <CardDescription>Erstellen Sie ein neues Konto.</CardDescription>
         </CardHeader>
         <CardContent>
+          {error && (
+            <div className="mb-4 text-sm text-red-600 text-center" role="alert">
+              {error}
+            </div>
+          )}
           <form onSubmit={handleRegister} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="first-name">Vorname</Label>
@@ -144,6 +116,7 @@ export default function RegisterPage() {
                 onChange={(e) => setFirstName(e.target.value)}
                 required
                 autoComplete="given-name"
+                disabled={isLoading}
               />
             </div>
             <div className="space-y-2">
@@ -156,6 +129,7 @@ export default function RegisterPage() {
                 onChange={(e) => setLastName(e.target.value)}
                 required
                 autoComplete="family-name"
+                disabled={isLoading}
               />
             </div>
             <div className="space-y-2">
@@ -168,6 +142,7 @@ export default function RegisterPage() {
                 onChange={(e) => setPhone(e.target.value)}
                 required
                 autoComplete="tel"
+                disabled={isLoading}
               />
             </div>
             <div className="space-y-2">
@@ -180,6 +155,7 @@ export default function RegisterPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 autoComplete="email"
+                disabled={isLoading}
               />
             </div>
             <div className="space-y-2">
@@ -191,6 +167,7 @@ export default function RegisterPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="new-password"
+                disabled={isLoading}
               />
             </div>
             <div className="space-y-2">
@@ -202,10 +179,19 @@ export default function RegisterPage() {
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
                 autoComplete="new-password"
+                disabled={isLoading}
               />
             </div>
             <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? "Registrierung läuft..." : "Registrieren"}
+              {isLoading ? (
+                <span>
+                  <svg className="animate-spin h-4 w-4 mr-2 inline-block text-white" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                  </svg>
+                  Registrierung läuft...
+                </span>
+              ) : "Registrieren"}
             </Button>
           </form>
         </CardContent>
